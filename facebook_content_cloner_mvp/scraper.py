@@ -2,7 +2,7 @@
 Supports Playwright for full page timeline scraping and yt-dlp for video/reels stream extraction.
 """
 import datetime
-import json
+import hashlib
 import logging
 import re
 import time
@@ -64,6 +64,36 @@ def extract_post_id_from_url(url: str) -> str:
     return f"fb_{sanitized[:30]}_{ts}"
 
 
+def _is_truncated(text: str) -> bool:
+    return text.rstrip().endswith(('...', '…'))
+
+
+def _caption_from_title(title: str) -> str:
+    """'2K views · 33 reactions | <caption> | <tên page>' → '<caption>'."""
+    parts = title.split(' | ')
+    if len(parts) >= 3 and re.search(r'(views|lượt xem|reactions|cảm xúc)', parts[0], re.IGNORECASE):
+        return ' | '.join(parts[1:-1]).strip()
+    return ''
+
+
+def pick_video_with_audio(formats: list[dict]) -> str | None:
+    """Chọn file MP4 có cả hình lẫn tiếng.
+
+    Facebook trả luồng hình và tiếng tách riêng (DASH, acodec='none' hoặc vcodec='none') cùng bản ghép sẵn
+    'hd'/'sd'. Ưu tiên hd → sd → định dạng ghép sẵn khác; chỉ dùng luồng chỉ-có-hình khi không còn gì khác.
+    """
+    ok = [f for f in formats if str(f.get('url', '')).startswith('https://')]
+    by_id = {f.get('format_id'): f for f in ok}
+    for fid in ('hd', 'sd'):
+        if fid in by_id:
+            return by_id[fid]['url']
+    muxed = [f for f in ok if f.get('vcodec') not in (None, 'none') and f.get('acodec') not in (None, 'none')]
+    if muxed:
+        return muxed[-1]['url']
+    video_only = [f for f in ok if f.get('vcodec') not in (None, 'none')]
+    return video_only[-1]['url'] if video_only else None
+
+
 def parse_ytdlp_info(info: dict, fallback_url: str = '') -> dict:
     """Convert a yt-dlp extracted dict into standard post format."""
     post_id = str(info.get('id') or extract_post_id_from_url(fallback_url or info.get('webpage_url', '')))
@@ -71,10 +101,13 @@ def parse_ytdlp_info(info: dict, fallback_url: str = '') -> dict:
     title = (info.get('title') or '').strip()
     description = (info.get('description') or '').strip()
     
-    if description and title and title != description and not description.startswith(title):
-        message = f"{title}\n\n{description}"
-    else:
-        message = description or title or ''
+    # Với Facebook, title thường là "8.2K views · 71 reactions | <caption> | <tên page>": cùng caption.
+    # Facebook đôi khi cắt description ("…đều in..."); khi đó lấy caption trong title nếu đầy đủ hơn.
+    message = description or title or ''
+    if description and _is_truncated(description):
+        from_title = _caption_from_title(title)
+        if len(from_title) > len(description.rstrip('.… ')) and not _is_truncated(from_title):
+            message = from_title
 
     upload_date = info.get('upload_date')
     if upload_date and len(upload_date) == 8:
@@ -85,12 +118,7 @@ def parse_ytdlp_info(info: dict, fallback_url: str = '') -> dict:
         created_time = datetime.datetime.now().isoformat()
 
     attachments_data = []
-    video_url = info.get('url')
-    if not video_url and info.get('formats'):
-        for f in reversed(info['formats']):
-            if f.get('url', '').startswith('https://') and f.get('vcodec') != 'none':
-                video_url = f['url']
-                break
+    video_url = info.get('url') or pick_video_with_audio(info.get('formats') or [])
 
     thumbnail = info.get('thumbnail')
     media_item = {}
@@ -144,97 +172,188 @@ def scrape_via_ytdlp(url: str, max_count: int = 1) -> list[dict]:
     return results
 
 
+PERMALINK_KEYS = ('/reel/', '/videos/', '/posts/', '/photos/', '/photo/', 'story_fbid', '/permalink/', 'fbid=')
+KEEP_QUERY_KEYS = ('story_fbid', 'fbid', 'id', 'v', 'set')
+HEADER_NOISE = {'·', 'Đủ điều kiện nhận tiền hoa hồng', 'Eligible for commission', 'Theo dõi', 'Follow',
+                'Đã chỉnh sửa', 'Edited', 'Vừa xong', 'Just now', 'Được tài trợ', 'Sponsored'}
+UI_NOISE = {'Thích', 'Like', 'Bình luận', 'Comment', 'Chia sẻ', 'Share', 'Gửi', 'Send', 'Ẩn bớt', 'See less',
+            'Xem thêm', 'See more', 'Viết bình luận...', 'Viết bình luận công khai...', 'Phù hợp nhất',
+            'Most relevant', 'Theo dõi', 'Đã theo dõi', 'Tin nhắn'}
+FOOTER_START = ('Tất cả cảm xúc', 'All reactions')
+TIME_RE = re.compile(r'^(\d+\s*(giây|phút|giờ|ngày|tuần|tháng|năm|s|m|h|d|w|y)(\s*trước)?|Hôm qua.*|Yesterday.*|'
+                     r'\d{1,2}\s+tháng\s+\d{1,2}.*|Tháng\s+\d{1,2}.*)$', re.IGNORECASE)
+MIN_IMAGE_PX = 100
+PLAYER_TIME_RE = re.compile(r'^\d{1,2}:\d{2}(:\d{2})?\s*/\s*\d{1,2}:\d{2}(:\d{2})?$')
+INLINE_TOGGLE_RE = re.compile(r'\s+(Ẩn bớt|Xem thêm|See less|See more)$')
+
+
+def pick_permalink(hrefs: list[str]) -> str | None:
+    """Link riêng của bài: bỏ tham số theo dõi (__cft__, __tn__...), giữ story_fbid/id cho permalink.php."""
+    for href in hrefs:
+        if not href or not any(k in href for k in PERMALINK_KEYS):
+            continue
+        parts = urllib.parse.urlsplit(urllib.parse.urljoin('https://www.facebook.com/', href))
+        if 'facebook.com' not in (parts.hostname or ''):
+            continue
+        query = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query) if k in KEEP_QUERY_KEYS]
+        return urllib.parse.urlunsplit(('https', parts.netloc, parts.path, urllib.parse.urlencode(query), ''))
+    return None
+
+
+def clean_post_text(raw: str, page_name: str = '') -> str:
+    """Bỏ phần đầu (tên page, thời gian, nhãn) và phần cuối (cảm xúc, nút bấm) của khối bài đăng."""
+    lines = [l.strip() for l in raw.splitlines()]
+    body, started = [], False
+    for line in lines:
+        if line.startswith(FOOTER_START):
+            break
+        line = INLINE_TOGGLE_RE.sub('', line).strip()  # "… Ẩn bớt" dính cuối dòng
+        if not line or line in UI_NOISE or line.isdigit() or PLAYER_TIME_RE.match(line):
+            continue
+        if not started and (line == page_name or line in HEADER_NOISE or TIME_RE.match(line)):
+            continue
+        started = True
+        body.append(line)
+    return '\n'.join(body).strip()
+
+
+def content_images(imgs: list[tuple[str, int, int]]) -> list[str]:
+    """Ảnh nội dung: chỉ ảnh fbcdn/scontent, bỏ avatar/emoji nhỏ và ảnh trùng. Kích thước 0 = chưa biết, vẫn giữ."""
+    out = []
+    for src, w, h in imgs:
+        if not src.startswith('https://') or 'scontent' not in src:
+            continue
+        if (w and w < MIN_IMAGE_PX) or (h and h < MIN_IMAGE_PX):
+            continue
+        if src not in out:
+            out.append(src)
+    return out
+
+
+def choose_caption(page_text: str, ytdlp_text: str, is_video: bool) -> str:
+    """Reel/video: caption từ yt-dlp là nguyên văn tác giả (chữ trên trang lẫn phụ đề video). Bài khác: lấy bản dài hơn."""
+    if is_video and ytdlp_text.strip():
+        if _is_truncated(ytdlp_text) and len(page_text) > len(ytdlp_text) and not _is_truncated(page_text):
+            return page_text
+        return ytdlp_text.strip()
+    return page_text if len(page_text) >= len(ytdlp_text) else ytdlp_text
+
+
+def _dismiss_login_dialog(page) -> bool:
+    """Đóng hộp "Xem thêm từ …" (có nút X do Facebook cung cấp) để trang cuộn được. Không đăng nhập."""
+    btn = page.locator("div[role='dialog'] div[aria-label='Đóng'], div[role='dialog'] div[aria-label='Close']")
+    if btn.count():
+        try:
+            btn.first.click(timeout=3000)
+            time.sleep(0.8)
+            return True
+        except Exception:
+            return False
+    return False
+
+
+def _expand_see_more(post):
+    for label in ('Xem thêm', 'See more'):
+        try:
+            more = post.locator(f"div[role='button']:text-is('{label}')")
+            if more.count():
+                more.first.click(timeout=2000)
+                time.sleep(0.4)
+        except Exception:
+            pass
+
+
+def _stable_id(text: str) -> str:
+    return 'fb_' + hashlib.md5(text.encode('utf-8')).hexdigest()[:12]
+
+
 def scrape_facebook_page_playwright(page_url: str, max_count: int = 5, progress_callback=None) -> list[dict]:
-    """Scrape posts/reels from a Facebook Fanpage or Profile using Playwright headless."""
+    """Cào bài công khai từ Fanpage/Profile bằng Playwright headless (không đăng nhập).
+
+    Facebook chỉ cho khách chưa đăng nhập xem một số bài đầu (thường ~8–10); khi trang không tải thêm,
+    hàm trả về số bài lấy được và báo lý do qua progress_callback.
+    """
     from playwright.sync_api import sync_playwright
 
-    if progress_callback:
-        progress_callback("Đang mở trình duyệt nền (Playwright) để tải bài viết của Page...")
+    def say(msg):
+        if progress_callback:
+            progress_callback(msg)
 
-    posts = []
+    say("Đang mở trình duyệt nền (Playwright) để tải bài viết của Page...")
+    posts, seen = [], set()
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 900},
-            locale="vi-VN"
-        )
+        context = browser.new_context(user_agent=HEADERS['User-Agent'], viewport={"width": 1280, "height": 900},
+                                      locale="vi-VN")
         page = context.new_page()
         page.goto(page_url, wait_until="domcontentloaded", timeout=35000)
         time.sleep(3)
+        page_name = (page.title() or '').split(' | ')[0].strip()
 
-        # Scroll down to load posts
-        scroll_attempts = 0
-        found_articles = []
-        while len(found_articles) < max_count and scroll_attempts < 8:
-            scroll_attempts += 1
-            page.evaluate("window.scrollBy(0, 1600)")
-            time.sleep(2)
-            found_articles = page.locator("div[role='article']").all()
-            if progress_callback:
-                progress_callback(f"Đang cuộn tìm bài viết ({len(found_articles)}/{max_count})...")
-
-        for idx, art in enumerate(found_articles):
-            if len(posts) >= max_count:
+        units, stale = [], 0
+        for _ in range(20):
+            _dismiss_login_dialog(page)
+            units = page.locator("div[aria-posinset]").all()
+            say(f"Đang cuộn tìm bài viết ({min(len(units), max_count)}/{max_count})...")
+            if len(units) >= max_count:
                 break
-            raw_text = art.inner_text().strip()
-            lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
-            ignore_keywords = {"Thích", "Bình luận", "Chia sẻ", "Viết bình luận...", "Gửi", "Theo dõi", "Đã theo dõi", "Tin nhắn"}
-            clean_lines = [l for l in lines if l not in ignore_keywords]
-            message = "\n".join(clean_lines) if clean_lines else raw_text
+            before = len(units)
+            page.mouse.wheel(0, 2500)
+            time.sleep(2.5)
+            stale = stale + 1 if len(page.locator("div[aria-posinset]").all()) == before else 0
+            if stale >= 3:
+                break
+        if not units:  # giao diện cũ: không có aria-posinset
+            units = page.locator("div[role='article']").all()
 
-            # Find media images
-            imgs = []
-            for img in art.locator("img").all():
-                src = img.get_attribute("src") or ""
-                if src.startswith("https://") and ("fbcdn" in src or "scontent" in src):
-                    imgs.append(src)
-
-            # Find post or reel link
-            post_permalink = page_url
-            reel_or_video_url = None
-            for a in art.locator("a").all():
-                href = a.get_attribute("href") or ""
-                if any(k in href for k in ["/posts/", "/videos/", "/reel/", "story_fbid", "/photos/"]):
-                    clean_link = href.split("?")[0] if "?" in href else href
-                    post_permalink = clean_link
-                    if "/reel/" in clean_link or "/videos/" in clean_link:
-                        reel_or_video_url = clean_link
-                    break
-
-            attachments_data = []
-            if reel_or_video_url:
-                try:
-                    if progress_callback:
-                        progress_callback(f"Đang lấy video MP4 cho bài {len(posts)+1}...")
-                    reel_data = scrape_via_ytdlp(reel_or_video_url, max_count=1)
-                    if reel_data and reel_data[0].get('attachments', {}).get('data'):
-                        attachments_data = reel_data[0]['attachments']['data']
-                        if reel_data[0].get('message') and len(reel_data[0]['message']) > len(message):
-                            message = reel_data[0]['message']
-                except Exception:
-                    pass
-
-            if not attachments_data and imgs:
-                attachments_data.append({'media': {'image': {'src': imgs[0]}}})
-
-            if not message and not attachments_data:
+        raw_posts = []
+        for unit in units:
+            if len(raw_posts) >= max_count:
+                break
+            try:
+                _expand_see_more(unit)
+                text = clean_post_text(unit.inner_text(), page_name)
+                hrefs = [a.get_attribute('href') or '' for a in unit.locator('a').all()]
+                imgs = []
+                for img in unit.locator('img').all():
+                    size = img.evaluate('e => [e.naturalWidth || e.width || 0, e.naturalHeight || e.height || 0]')
+                    imgs.append((img.get_attribute('src') or '', size[0], size[1]))
+            except Exception as exc:
+                logger.info(f"Bỏ qua một khối bài: {exc}")
                 continue
-
-            post_id = extract_post_id_from_url(post_permalink)
-            posts.append({
-                'id': post_id,
-                'message': message,
-                'created_time': datetime.datetime.now().isoformat(),
-                'permalink_url': post_permalink,
-                'attachments': {'data': attachments_data},
-                'source_type': 'facebook_page'
-            })
-            if progress_callback:
-                progress_callback(f"Đã lấy thành công bài {len(posts)}/{max_count}...")
-
+            permalink = pick_permalink(hrefs)
+            if not text and not permalink:
+                continue
+            raw_posts.append((text, permalink, content_images(imgs)))
         browser.close()
 
+    for idx, (text, permalink, images) in enumerate(raw_posts, 1):
+        attachments, message = [], text
+        if permalink and ('/reel/' in permalink or '/videos/' in permalink):
+            say(f"Đang lấy caption đầy đủ & video cho bài {idx}/{len(raw_posts)}...")
+            try:
+                data = scrape_via_ytdlp(permalink, max_count=1)
+                if data:
+                    attachments = data[0].get('attachments', {}).get('data', [])
+                    message = choose_caption(text, data[0].get('message') or '', is_video=True)
+            except Exception as exc:
+                logger.info(f"yt-dlp lỗi {permalink}: {exc}")
+        if not attachments:
+            attachments = [{'media': {'image': {'src': src}}} for src in images]
+        post_id = extract_post_id_from_url(permalink) if permalink else _stable_id(message)
+        if post_id.startswith('fb_') and permalink:
+            post_id = _stable_id(permalink)
+        if post_id in seen or not (message or attachments):
+            continue
+        seen.add(post_id)
+        posts.append({'id': post_id, 'message': message, 'created_time': datetime.datetime.now().isoformat(),
+                      'permalink_url': permalink or page_url, 'attachments': {'data': attachments},
+                      'source_type': 'facebook_page'})
+        say(f"Đã lấy thành công bài {len(posts)}/{max_count}...")
+
+    if len(posts) < max_count:
+        say(f"Chỉ lấy được {len(posts)}/{max_count} bài: Facebook không cho khách chưa đăng nhập xem thêm. "
+            "Muốn lấy thêm, hãy dán link từng bài/Reel (mỗi dòng một link).")
     return posts
 
 

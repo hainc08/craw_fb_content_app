@@ -65,7 +65,11 @@ Skill toàn cục liên quan: `ke-chuyen-video` (Reel 9:16 cho Page Chuyện Đ�
 
 ## Lưu ý kỹ thuật
 - Playwright cần trình duyệt: `py -3 -m playwright install chromium`.
-- Facebook thường chặn khách chưa đăng nhập → link Page có thể ra ít bài/chữ rác; link bài/Reel cụ thể ổn định hơn.
+- Cào link Page: Facebook bật hộp "Xem thêm từ …" khóa cuộn với khách chưa đăng nhập; scraper bấm nút X của hộp
+  rồi cuộn, lấy khối `div[aria-posinset]`. Khách chỉ xem được ~8–10 bài đầu → muốn nhiều hơn thì dán link từng bài.
+  Không đăng nhập, không lách giới hạn đó.
+- Reel/video: caption + MP4 lấy qua yt-dlp; chọn bản `hd`/`sd` ghép sẵn tiếng (các luồng DASH khác chỉ có hình
+  hoặc chỉ có tiếng). Description bị Facebook cắt ("...") thì lấy caption trong title.
 - `created_time` của bài cào bằng Playwright là lúc cào, không phải ngày đăng.
 - Graph API `v26.0`; đăng cần token quyền `pages_manage_posts`; hẹn giờ 10 phút – 30 ngày, giờ không múi = giờ VN.
 - Tk không an toàn đa luồng: luồng phụ không gọi widget; `publish_dialog` dùng hàng đợi + `after()` để nhận kết quả.
