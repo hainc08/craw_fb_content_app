@@ -1,0 +1,17 @@
+{
+  "data": [
+    {
+      "id": "demo_001",
+      "message": "Một người thợ già luôn kiểm tra từng đường chỉ trước khi giao đôi giày. Điều khiến khách quay lại không phải lời quảng cáo, mà là sự tận tâm.",
+      "created_time": "2026-10-26T09:00:00+0700",
+      "permalink_url": "https://example.org/authorized-demo-post",
+      "attachments": {"data": []}
+    },
+    {
+      "id": "demo_002",
+      "message": "Một lời xin lỗi đúng lúc có thể cứu một mối quan hệ. Hãy thử kể câu chuyện theo góc nhìn mới.",
+      "created_time": "2026-10-25T09:00:00+0700",
+      "attachments": {"data": []}
+    }
+  ]
+}

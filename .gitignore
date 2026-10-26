@@ -1,0 +1,6 @@
+__pycache__/
+dist/
+build/
+*.spec
+.pytest_cache/
+.superpowers/
