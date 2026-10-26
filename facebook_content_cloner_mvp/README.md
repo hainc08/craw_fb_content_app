@@ -1,6 +1,6 @@
 # Facebook Content Cloner — Windows MVP
 
-Ứng dụng Python Tkinter cho nội dung Page được chủ sở hữu cho phép sử dụng. Không tự đăng hay tự vượt hạn chế Facebook.
+Ứng dụng Python Tkinter cho nội dung Page được chủ sở hữu cho phép sử dụng. Hỗ trợ nhiều Page; chỉ đăng bài đã duyệt khi bạn xác nhận, không vượt hạn chế Facebook.
 
 ## Chạy trên Windows
 1. Cài Python 3.11–3.13 từ python.org và bật **Add Python to PATH** (Tkinter thường đi kèm Python bản Windows).
@@ -62,21 +62,41 @@ Một mảng `[{"id":"...","message":"...","created_time":"...","permalink_url":
 - Chưa có OAuth GUI, token nhập thủ công và chỉ nằm trong RAM khi dùng UI (không lưu SQLite). Tránh chia sẻ token qua chat hoặc commit Git.
 - JSON phải đến từ nguồn tin cậy; nhập dữ liệu nguồn lạ chỉ khi đã kiểm tra. URL tải media có thể truy cập các địa chỉ HTTPS mà JSON cung cấp; chỉ tải JSON đáng tin và tránh URL nội bộ.
 - Không có phát hiện sao chép nội dung bằng mô hình chuyên dụng; cần người duyệt nội dung.
-- Không có login scraper/browser automation, không download Reels bị hạn chế, không lịch đăng, không cloud sync. Đây là MVP kiểm chứng tính năng chứ không phải công cụ bảo đảm tải được 100% media Facebook.
+- Không có login scraper/browser automation, không download Reels bị hạn chế, không cloud sync. Đây là MVP kiểm chứng tính năng chứ không phải công cụ bảo đảm tải được 100% media Facebook.
 - Quyền sử dụng lại ảnh/video và âm nhạc cần được cho phép riêng; cấp quyền lấy dữ liệu không tự động cấp quyền sử dụng mọi tác phẩm của bên thứ ba.
 
 ## Nâng cấp nghiên cứu & sáng tạo (bản 1.1)
 - **Phân tích AI**: đọc caption/transcript bài nguồn và lưu insight vào bảng `research`.
 - **Sáng tạo mới**: tạo câu chuyện mới, caption, kịch bản Reel 6 cảnh, CTA, hashtag. Nguồn là tham khảo chủ đề, không phải văn bản để đổi từ.
 - **Kiểm tra trùng**: so khớp chuỗi và cụm 7 từ chung, chỉ là chỉ báo để người dùng xét duyệt, không phải đánh giá pháp lý.
-- **Lưu nháp / Duyệt / Xuất TXT**: không tự đăng lên Facebook.
+- **Lưu nháp / Duyệt / Xuất TXT**: chỉ đăng khi bấm "🚀 Đăng lên Page" và xác nhận (bản 1.3).
 - **Video**: lưu MP4 nếu nguồn cấp link tải hợp lệ; để nghiên cứu nội dung video, cần thêm transcript hoặc mô tả video vào trường `message` trong JSON nguồn. Phiên bản này KHÔNG tự bóc tiếng/nhận dạng video.
 - Khi Graph API bị chặn, yêu cầu chủ Page cấp quyền tương ứng hoặc cung cấp JSON/media trực tiếp; không dùng crawler né xác thực hoặc CAPTCHA.
 - API key được nhập trong phiên làm việc hoặc biến môi trường `OPENAI_API_KEY` và không lưu trong database.
 
-## CLI `fbtool.py` (bản 1.2) — dùng cho Claude Code / tự động hóa
-Dùng chung DB với GUI, không mở cửa sổ. Xem `py -3 fbtool.py -h` và `CLAUDE.md` ở thư mục gốc.
+## CLI `fbtool.py` — dùng cho Claude Code / tự động hóa
+Dùng chung DB và `pages.json` với GUI, không mở cửa sổ. Xem `py -3 fbtool.py -h` và `CLAUDE.md` ở thư mục gốc.
+- Cờ `--page <slug>` đặt trước lệnh con (bỏ trống = Page đang chọn); `pages` liệt kê Page, `page-show` xem prompt.
 - `scrape`, `list`, `show`, `analyze`, `create`, `save-draft`, `check`, `approve`, `page-info`, `publish`.
-- `approve`/`publish` chặn nháp quá giống nguồn (sequence_ratio > 0.35 hoặc trùng cụm 7 từ) và chặn đăng lại media cào về.
-- `publish` mặc định chạy thử; thêm `--yes` để đăng thật lên Page qua Graph API (`FB_PAGE_ID`, `FB_PAGE_TOKEN`
-  hoặc khóa `fb_page_id`, `fb_page_token` trong `api_config.json`; token cần quyền `pages_manage_posts`).
+- `approve`/`publish` chặn nháp quá giống nguồn (theo ngưỡng trùng của Page, hoặc trùng cụm 7 từ) và chặn đăng lại media cào về.
+- `publish` mặc định chạy thử; thêm `--yes` để đăng thật bằng Page ID/token của Page (token cần quyền `pages_manage_posts`).
+
+## Quản lý nhiều Page (bản 1.3)
+- Thanh trên cùng: **Page đang làm** — chọn Page; danh sách bài, phân tích, nháp, trạng thái đều theo Page này.
+  Bài cào về dùng chung cho mọi Page, mỗi Page có nháp riêng.
+- **⚙️ Quản lý Page**: thêm/sửa/xóa Page. Mỗi Page có: tên, Facebook Page ID (số), Page Access Token
+  (kèm nút Kiểm tra token), nhà cung cấp AI (hoặc dùng mặc định chung), hashtag, ngưỡng trùng, **prompt phân tích**
+  và **prompt sáng tạo** riêng (dùng `{page_name}`, `{hashtags}` để chèn tên Page và hashtag; có nút khôi phục mặc định).
+- Cấu hình lưu ở `Documents\FacebookContentCloner\pages.json` (token chỉ nằm ở đây, không vào database).
+- Khóa AI (Gemini/Cloudflare/OpenAI) vẫn nhập một lần ở **⚙️ Khóa AI (dùng chung)**.
+
+## Xem ảnh/video & đăng bài (bản 1.3)
+- Ô **Link Facebook** nhận nhiều link, mỗi dòng một link.
+- Chọn bài → khung **Ảnh & Video đã cào** hiện ảnh thu nhỏ và ô video; bấm để mở bằng ứng dụng mặc định.
+  Mục chưa tải có nút **⬇ Tải media còn thiếu**.
+- **Sáng tạo mới** viết theo prompt của Page và tự lưu nháp; **Duyệt** chỉ đạt khi bài mới đủ khác bài nguồn.
+- **🚀 Đăng lên Page**: đăng chữ / kèm ảnh / video, có thể hẹn giờ (giờ VN, 10 phút–30 ngày). Không cho đăng lại
+  file media cào từ bài người khác trừ khi bạn xác nhận có quyền.
+
+## Kiểm thử
+`py -3 -m pip install -r requirements-dev.txt` rồi `py -3 -m pytest tests -v`.

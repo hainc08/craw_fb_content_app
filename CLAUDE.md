@@ -1,71 +1,72 @@
-# Facebook Content Research & Creator — page "Chuyện Đời & Nhân Tâm"
+# Facebook Content Research & Creator — đa Page
 
-Công cụ Windows để: cào bài công khai trên Facebook → phân tích → sáng tạo lại thành nội dung **mới** theo
-giọng page "Chuyện Đời & Nhân Tâm" → duyệt → đăng lên Page.
+Công cụ Windows để: cào bài công khai trên Facebook → xem nội dung + ảnh/video → AI viết lại thành nội dung
+**mới** theo prompt riêng của từng Page → duyệt → đăng lên Page. Hỗ trợ nhiều Page (mặc định có
+"Chuyện Đời & Nhân Tâm", slug `chuyen-doi-nhan-tam`).
 
-## Cấu trúc
-
-```
-start_windows.bat                 # mở GUI (gọi facebook_content_cloner_mvp/start_windows.bat)
-facebook_content_cloner_mvp/
-  app.py        # GUI Tkinter + SQLite + tải media + Graph API đọc Page (fetch_page)
-  scraper.py    # cào URL: Page/Profile → Playwright headless; Reel/Video/Post → yt-dlp (fallback Playwright)
-  research.py   # AI: Gemini (mặc định, tự thử nhiều model) / Cloudflare Llama 3.1 / OpenAI; similarity()
-  fbtool.py     # CLI không GUI dùng lại các module trên — các skill dùng file này
-  sample_posts.json, build_exe.bat (PyInstaller → dist/FacebookContentCloner.exe)
-.claude/skills/   # skill của dự án (xem bên dưới)
-```
+## Cấu trúc (`facebook_content_cloner_mvp/`)
+| File | Việc |
+|---|---|
+| `app.py` | GUI Tkinter: chọn Page, ô URL nhiều dòng, danh sách bài + trạng thái theo Page, dải ảnh/video, phân tích/sáng tạo/duyệt/đăng. Cũng chứa `db()`, `init_db()`, `insert_post`, `save_media`, `graph_get` |
+| `scraper.py` | Cào URL: Page/Profile → Playwright headless; Reel/Video/Post → yt-dlp (fallback Playwright) |
+| `research.py` | AI: Gemini (mặc định, tự thử nhiều model) / Cloudflare Llama 3.1 / OpenAI; `render_prompt`, `similarity` |
+| `pages.py` | `PageProfile`, `PageStore` (đọc/ghi `pages.json`, Page đang chọn), prompt mặc định |
+| `page_data.py` | Nháp / phân tích / đã đăng theo cặp (bài nguồn, Page) |
+| `publisher.py` | Kiểm tra (trùng, khung mẫu, media cào về, giờ hẹn) + gửi Graph API — dùng chung GUI và CLI |
+| `media_view.py` | Dải ảnh thu nhỏ/ô video (Pillow) |
+| `page_dialog.py` / `publish_dialog.py` | Hộp thoại Quản lý Page / Đăng bài |
+| `fbtool.py` | CLI không GUI — các skill dùng file này |
+| `tests/` | pytest: `py -3 -m pytest tests -v` (chạy trong `facebook_content_cloner_mvp/`) |
 
 ## Dữ liệu
-- Thư mục dữ liệu: `%USERPROFILE%\Documents\FacebookContentCloner` (đổi bằng biến `FBCLONER_HOME`).
-  - `content.sqlite3`: bảng `posts` (nguồn), `media`, `research` (phân tích), `drafts` (body, status),
-    `published` (do fbtool tạo: post_id → fb_post_id).
-  - `media/<post_id>/`: ảnh/video đã cào — **chỉ để tham khảo, không đăng lại**.
-  - `api_config.json`: khóa AI (`provider`, `gemini_key`, `cloudflare_*`, `openai_key`) và tùy chọn
-    `fb_page_id`, `fb_page_token`. Không bao giờ in giá trị khóa ra màn hình hay commit.
+- Thư mục: `%USERPROFILE%\Documents\FacebookContentCloner` (đổi bằng biến `FBCLONER_HOME`).
+  - `pages.json`: `{"active": slug, "pages": [PageProfile...]}` — tên, `fb_page_id`, `fb_page_token`, `provider`
+    ('' = dùng chung), `hashtags`, `analysis_prompt`, `creation_prompt` (placeholder `{page_name}`, `{hashtags}`),
+    `max_similarity`. File hỏng → tự đổi tên `.bak` và tạo lại Page mặc định.
+  - `api_config.json`: khóa AI dùng chung (`provider`, `gemini_key`, `cloudflare_*`, `openai_key`).
+  - `content.sqlite3`: `posts`, `media` (dùng chung mọi Page); `page_drafts`, `page_research`, `page_published`
+    (khóa `(post_id, page_slug)`). Bảng cũ `drafts`/`research` chỉ còn để migrate sang Page mặc định.
+  - `media/<post_id>/`: ảnh/video cào về — **chỉ để tham khảo, không đăng lại**.
+- Token Page chỉ nằm trong `pages.json`: không vào SQLite, không in ra màn hình/log (`public_dict()` bỏ token).
 - Trạng thái nháp: `review` → `approved` → `published` / `scheduled`.
 
-## CLI (chạy trong `facebook_content_cloner_mvp/`, Python 3.14 qua `py -3`)
+## CLI (trong `facebook_content_cloner_mvp/`, cờ `--page` đứng TRƯỚC lệnh con)
 ```
+py -3 fbtool.py pages                                  # danh sách Page (không token)
+py -3 fbtool.py --page <slug> page-show                # cấu hình + prompt đã render
 py -3 fbtool.py scrape <url...> [--limit 5] [--no-media]
-py -3 fbtool.py list [--status none|review|approved|published|scheduled]
-py -3 fbtool.py show <id>
-py -3 fbtool.py analyze <id> [--provider gemini|cloudflare|openai]   # lưu vào research
-py -3 fbtool.py create <id>                                          # AI của app viết, chỉ in ra
-py -3 fbtool.py save-draft <id> --file draft.txt                     # lưu nháp + tự kiểm tra trùng
-py -3 fbtool.py check <id>        # exit 2 nếu quá giống nguồn
-py -3 fbtool.py approve <id>      # chỉ duyệt khi qua kiểm tra trùng
-py -3 fbtool.py page-info         # kiểm tra token Page
-py -3 fbtool.py publish <id> [--image f | --video f] [--schedule 2026-10-27T20:00] [--yes]
+py -3 fbtool.py --page <slug> list [--status none|review|approved|published|scheduled]
+py -3 fbtool.py --page <slug> show <id>
+py -3 fbtool.py --page <slug> analyze|create <id> [--provider ...]
+py -3 fbtool.py --page <slug> save-draft <id> --file draft.txt
+py -3 fbtool.py --page <slug> check|approve <id>
+py -3 fbtool.py --page <slug> page-info
+py -3 fbtool.py --page <slug> publish <id> [--image f | --video f] [--schedule 2026-10-27T20:00] [--yes]
 ```
-Output là JSON (UTF-8). `publish` mặc định **chạy thử**; chỉ thêm `--yes` sau khi người dùng xác nhận.
+Output JSON UTF-8. `publish` mặc định **chạy thử**; chỉ thêm `--yes` sau khi người dùng xác nhận.
 
 ## Quy tắc nội dung (bắt buộc)
-- Bài nguồn chỉ là **tham khảo chủ đề / cơ chế cảm xúc**. Bản mới phải có nhân vật, bối cảnh, diễn biến,
-  lời thoại khác hẳn; không paraphrase câu-đổi-câu. Ngưỡng tự động: `sequence_ratio ≤ 0.35` và không trùng
-  cụm 7 từ nào (`fbtool.py` chặn duyệt/đăng nếu vượt).
-- Không đăng lại ảnh/video/nhạc cào về (fbtool chặn file nằm trong `media/`). Dùng ảnh tự tạo/AI
-  hoặc làm video bằng skill `ke-chuyen-video`.
-- Không bịa trích dẫn gán cho Dale Carnegie hay người nổi tiếng; không chép văn bản sách Đắc Nhân Tâm.
-- Chuyện hư cấu thì không viết như trải nghiệm có thật của page; không nêu tên người thật.
-- Chỉ cào nội dung **công khai**, số lượng nhỏ (≤ 20 bài/lần), không đăng nhập, không vượt CAPTCHA/chặn.
-- Đăng bài là hành động công khai: luôn cho người dùng xem bản cuối và xác nhận trước khi `--yes`.
+- Bài nguồn chỉ là tham khảo chủ đề / cơ chế cảm xúc. Bản mới phải có nhân vật, bối cảnh, diễn biến, lời thoại
+  khác hẳn. Ngưỡng tự động: `sequence_ratio ≤ max_similarity` của Page (mặc định 0.35) và 0 cụm 7 từ chung.
+- Không đăng lại ảnh/video/nhạc cào về (publisher chặn file trong `media/`).
+- Không bịa trích dẫn gán cho người nổi tiếng; không chép văn bản sách có bản quyền; không nêu tên người thật.
+- Chỉ cào nội dung công khai, ít một (≤ 20 bài/lần), không đăng nhập, không vượt CAPTCHA/chặn.
+- Đăng bài là hành động công khai: luôn cho người dùng xem bản cuối và xác nhận.
 
-## Skill dự án
+## Skill dự án (`.claude/skills/`)
 | Skill | Dùng khi |
 |---|---|
-| `cao-bai-facebook` | Cào bài/Reels công khai từ link Page/bài viết vào DB |
-| `sang-tao-nhan-tam` | Phân tích bài nguồn và viết lại thành bài mới theo giọng page |
-| `dang-bai-page` | Đăng / hẹn giờ bài đã duyệt lên Page Chuyện Đời & Nhân Tâm |
-| `quy-trinh-nhan-tam` | Làm trọn: cào → chọn bài → sáng tạo → duyệt → đăng (tùy chọn làm video) |
+| `cao-bai-facebook` | Cào bài/Reels công khai vào DB |
+| `sang-tao-noi-dung` | Viết lại bài nguồn theo prompt của một Page |
+| `dang-bai-page` | Đăng / hẹn giờ bài đã duyệt lên một Page |
+| `quy-trinh-noi-dung` | Làm trọn cho một hoặc nhiều Page |
 
-Skill toàn cục liên quan: `ke-chuyen-video` (biến câu chuyện thành Reel 9:16 cho page này).
+Skill toàn cục liên quan: `ke-chuyen-video` (Reel 9:16 cho Page Chuyện Đời & Nhân Tâm).
 
 ## Lưu ý kỹ thuật
-- Playwright cần trình duyệt: `py -3 -m playwright install chromium` nếu báo thiếu.
-- Facebook thường chặn khách chưa đăng nhập → Page có thể trả ít bài hoặc toàn chữ rác giao diện
-  ("Thích", "Bình luận"...). Khi đó dùng link bài/Reel cụ thể (yt-dlp ổn định hơn) hoặc dán tay qua GUI.
-- `created_time` của bài cào bằng Playwright là thời điểm cào, không phải ngày đăng thật.
-- Graph API: `GRAPH_VERSION = 'v26.0'` trong app.py. Đăng cần Page Access Token có quyền
-  `pages_manage_posts`, `pages_read_engagement`. Hẹn giờ: 10 phút – 30 ngày.
-- Không có test tự động; kiểm tra bằng `FBCLONER_HOME=<thư mục tạm>` + `sample_posts.json` để khỏi đụng DB thật.
+- Playwright cần trình duyệt: `py -3 -m playwright install chromium`.
+- Facebook thường chặn khách chưa đăng nhập → link Page có thể ra ít bài/chữ rác; link bài/Reel cụ thể ổn định hơn.
+- `created_time` của bài cào bằng Playwright là lúc cào, không phải ngày đăng.
+- Graph API `v26.0`; đăng cần token quyền `pages_manage_posts`; hẹn giờ 10 phút – 30 ngày, giờ không múi = giờ VN.
+- Tk không an toàn đa luồng: luồng phụ không gọi widget; `publish_dialog` dùng hàng đợi + `after()` để nhận kết quả.
+- Test GUI dựng `Tk()` ẩn — cần phiên Windows có màn hình. Dev deps: `py -3 -m pip install -r requirements-dev.txt`.

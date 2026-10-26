@@ -1,6 +1,6 @@
 ---
 name: cao-bai-facebook
-description: Cào bài viết, Reels, video công khai trên Facebook (link Page, Profile, bài viết, Reel, share link hoặc danh sách link) vào database của app Facebook Content Cloner để làm nguồn tham khảo cho page "Chuyện Đời & Nhân Tâm". Dùng khi người dùng nói "cào bài", "lấy bài từ page...", "scrape facebook", "tải bài/Reels về", "lấy nội dung page X", hoặc dán link facebook.com và muốn lấy nội dung.
+description: Cào bài viết, Reels, video công khai trên Facebook (link Page, Profile, bài viết, Reel, share link hoặc danh sách link) vào database của app Facebook Content Cloner để làm nguồn tham khảo cho các Page đã cấu hình (Chuyện Đời & Nhân Tâm hoặc Page khác). Dùng khi người dùng nói "cào bài", "lấy bài từ page...", "scrape facebook", "tải bài/Reels về", "lấy nội dung page X", hoặc dán link facebook.com và muốn lấy nội dung.
 ---
 
 # Cào bài Facebook công khai
@@ -23,12 +23,13 @@ Mọi lệnh chạy trong `D:\facebook_content_research_creator_windows\facebook
    - `saved: 0` với link Page → Facebook chặn khách chưa đăng nhập. Gợi ý: dán link từng bài/Reel cụ thể,
      hoặc mở GUI (`start_windows.bat`) → "Dán nhanh thủ công".
    - Lỗi thiếu trình duyệt → `py -3 -m playwright install chromium` rồi chạy lại.
-4. **Báo lại** dạng bảng ngắn: id → tóm tắt 1 dòng → chủ đề có hợp page không (đời sống, ứng xử, gia đình,
-   công sở, lòng tốt, bài học sống). Gợi ý 1–3 bài nên sáng tạo lại → skill `sang-tao-nhan-tam`.
+4. **Báo lại** dạng bảng ngắn: id → tóm tắt 1 dòng → hợp với Page nào (xem `py -3 fbtool.py pages` và
+   `--page <slug> page-show` để biết chủ đề từng Page). Gợi ý 1–3 bài nên sáng tạo lại → skill `sang-tao-noi-dung`.
+   Bài cào về dùng chung cho mọi Page; người dùng xem ảnh/video ngay trong GUI khi chọn bài.
 
 ## Xem lại dữ liệu
 ```bash
-py -3 fbtool.py list --limit 20          # có cột status/analyzed/published
+py -3 fbtool.py --page <slug> list --limit 20   # trạng thái nháp theo từng Page
 py -3 fbtool.py show <id>                # nội dung gốc đầy đủ + media + nháp
 ```
 
