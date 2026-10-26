@@ -52,7 +52,10 @@ class PublishDialog(Toplevel):
         bar.pack(fill='x', pady=(8, 0))
         self.publish_btn = ttk.Button(bar, text='🚀 Đăng', command=self.submit)
         self.publish_btn.pack(side='left')
-        ttk.Button(bar, text='Hủy', command=self.destroy).pack(side='right')
+        self.cancel_btn = ttk.Button(bar, text='Hủy', command=self.destroy)
+        self.cancel_btn.pack(side='right')
+        self._sending = False
+        self.protocol('WM_DELETE_WINDOW', self._close)
 
         if not profile.fb_page_id or not profile.fb_page_token:
             self.publish_btn.configure(state='disabled')
@@ -83,8 +86,10 @@ class PublishDialog(Toplevel):
                                    f'Đăng bài ({kind}) lên "{self.profile.name}" {when}?\n'
                                    'Bài sẽ hiển thị công khai.', parent=self):
             return
+        self._sending = True
         self.publish_btn.configure(state='disabled')
-        self.status_lbl.configure(text='Đang đăng…', foreground='#0066cc')
+        self.cancel_btn.configure(state='disabled')
+        self.status_lbl.configure(text='Đang đăng… (không đóng cửa sổ này)', foreground='#0066cc')
 
         results: queue.Queue = queue.Queue()
 
@@ -94,22 +99,48 @@ class PublishDialog(Toplevel):
             except Exception as e:
                 results.put(('err', str(e)))
 
+        # Hẹn kiểm tra trên cửa sổ cha: nếu hộp thoại có bị đóng, kết quả vẫn được ghi nhận.
+        owner = self.master
+
         def poll():
             try:
                 status, value = results.get_nowait()
             except queue.Empty:
-                self.after(100, poll)
+                owner.after(100, poll)
                 return
             (self._done if status == 'ok' else self._failed)(value)
 
         threading.Thread(target=work, daemon=True).start()
-        self.after(100, poll)
+        owner.after(100, poll)
+
+    def _alive(self):
+        try:
+            return bool(self.winfo_exists())
+        except Exception:
+            return False
+
+    def _close(self):
+        if not self._sending:
+            self.destroy()
 
     def _failed(self, msg):
-        self.publish_btn.configure(state='normal')
-        self.status_lbl.configure(text=msg, foreground='#c00')
-        messagebox.showerror('Đăng thất bại', msg, parent=self)
+        self._sending = False
+        text = (f'{msg}\n\nNếu lỗi xảy ra trong lúc tải lên, hãy kiểm tra Page xem bài đã lên chưa '
+                'trước khi thử đăng lại, để tránh đăng trùng.')
+        parent = self if self._alive() else self.master
+        if self._alive():
+            self.publish_btn.configure(state='normal')
+            self.cancel_btn.configure(state='normal')
+            self.status_lbl.configure(text=msg, foreground='#c00')
+        messagebox.showerror('Đăng thất bại', text, parent=parent)
 
     def _done(self, fb_id):
-        self.on_done(fb_id)
-        self.destroy()
+        self._sending = False
+        try:
+            self.on_done(fb_id)
+        except Exception as e:
+            messagebox.showerror('Đã đăng nhưng chưa ghi nhận',
+                                 f'Bài đã lên Page (ID {fb_id}) nhưng app không ghi lại được: {e}\n'
+                                 'Đừng đăng lại bài này.', parent=self.master)
+        if self._alive():
+            self.destroy()

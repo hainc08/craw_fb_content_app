@@ -83,3 +83,30 @@ def test_scrape_error_is_shown_to_user(gui, monkeypatch):
     a.start_auto_scrape()
     root.update()
     assert errors and 'Facebook chặn truy cập' in errors[0][1]
+
+
+def test_save_draft_keeps_published_status(gui, monkeypatch):
+    a, _ = gui
+    warnings = []
+    monkeypatch.setattr(app.messagebox, 'showwarning', lambda *x, **k: warnings.append(x))
+    with app.db() as c:
+        page_data.save_draft(c, 'demo_001', DEFAULT_SLUG, 'bài đã đăng', 'approved')
+        page_data.mark_published(c, 'demo_001', DEFAULT_SLUG, '1_1', 'text')
+    select(a, 'demo_001')
+    a.draft.insert('end', ' sửa thêm')
+    a.save_draft()
+    with app.db() as c:
+        d = page_data.get_draft(c, 'demo_001', DEFAULT_SLUG)
+    assert (d['status'], d['body']) == ('published', 'bài đã đăng') and warnings
+
+
+def test_create_post_asks_before_overwriting_approved(gui, monkeypatch):
+    a, _ = gui
+    asked, called = [], []
+    monkeypatch.setattr(app.messagebox, 'askyesno', lambda *x, **k: asked.append(x) or False)
+    monkeypatch.setattr(app, 'create_new', lambda *x, **k: called.append(x) or 'mới')
+    with app.db() as c:
+        page_data.save_draft(c, 'demo_001', DEFAULT_SLUG, 'bản đã duyệt', 'approved')
+    select(a, 'demo_001')
+    a.create_post()
+    assert asked and not called

@@ -555,11 +555,24 @@ class App:
         if not body:
             messagebox.showwarning('Bản nháp', 'Nhập nội dung mới trước.')
             return False
+        if self._locked_by_publish(self.current):
+            return False
         with db() as c:
             page_data.save_draft(c, self.current, self.page.slug, body, status)
         self.status.set(f'Đã lưu bản nháp cho {self.page.name}: {status}')
         self.refresh()
         return True
+
+    def _locked_by_publish(self, pid):
+        """Bài đã đăng/hẹn giờ trên Page này thì giữ nguyên nội dung đã đăng."""
+        with db() as c:
+            pub = page_data.get_published(c, pid, self.page.slug)
+        if pub:
+            messagebox.showwarning('Bài đã đăng',
+                                   f'Bài này đã đăng/hẹn giờ trên "{self.page.name}" (ID {pub["fb_post_id"]}).\n'
+                                   'Nội dung đã đăng được giữ nguyên, không lưu đè.')
+            return True
+        return False
 
     def approve(self):
         if not self.current:
@@ -698,6 +711,14 @@ class App:
         source = self._source_text(pid)
         if not source.strip():
             messagebox.showwarning('Nội dung trống', 'Bài viết này không có nội dung để sáng tạo.')
+            return
+        if self._locked_by_publish(pid):
+            return
+        with db() as c:
+            existing = page_data.get_draft(c, pid, page.slug)
+        if existing and existing['status'] == 'approved' and not messagebox.askyesno(
+                'Ghi đè bài đã duyệt?', 'Bài này đã được duyệt. Viết bản mới bằng AI sẽ thay bản đã duyệt '
+                '(và phải duyệt lại). Tiếp tục?'):
             return
         provider = self.effective_provider()
         if not self.ai_ready(provider):

@@ -95,18 +95,17 @@ class PageStore:
             except (ValueError, OSError):
                 data = None
         pages = []
+        dropped = False
         if isinstance(data, dict) and isinstance(data.get('pages'), list):
             for raw in data['pages']:
-                if not isinstance(raw, dict) or not str(raw.get('name', '')).strip():
+                p = self._parse(raw)
+                if p is None or any(x.slug == p.slug for x in pages):
+                    dropped = True
                     continue
-                vals = {k: v for k, v in raw.items() if k in _FIELDS}
-                try:
-                    p = PageProfile(**{'slug': '', **vals})
-                    p.max_similarity = float(p.max_similarity)
-                except (TypeError, ValueError):
-                    continue
-                p.slug = p.slug or slugify(p.name)
                 pages.append(p)
+        if pages and dropped:
+            # Giữ bản gốc trước khi lần ghi kế tiếp xóa mất các mục hỏng.
+            self.path.with_name(self.path.name + '.bak').write_bytes(self.path.read_bytes())
         if not pages:
             if self.path.exists():
                 self.path.replace(self.path.with_name(self.path.name + '.bak'))
@@ -117,6 +116,29 @@ class PageStore:
         self._pages = pages
         active = data.get('active', '')
         self._active = active if any(p.slug == active for p in pages) else pages[0].slug
+
+    @staticmethod
+    def _parse(raw) -> PageProfile | None:
+        """Đọc một mục trong file, ép kiểu an toàn; None nếu không dùng được."""
+        if not isinstance(raw, dict):
+            return None
+        vals = {k: ('' if raw.get(k) is None else str(raw[k])) for k in _FIELDS if k != 'max_similarity'}
+        if not vals['name'].strip():
+            return None
+        defaults = PageProfile(slug='', name='')
+        for key in ('analysis_prompt', 'creation_prompt'):
+            if key not in raw:
+                vals[key] = getattr(defaults, key)
+        if vals['provider'] not in PROVIDERS:
+            vals['provider'] = ''
+        try:
+            sim = float(raw.get('max_similarity', 0.35))
+        except (TypeError, ValueError):
+            sim = 0.35
+        p = PageProfile(**vals, max_similarity=sim if 0 < sim < 1 else 0.35)
+        p.name = p.name.strip()
+        p.slug = p.slug.strip() or slugify(p.name)
+        return p if p.slug else None
 
     def _write(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -147,9 +169,14 @@ class PageStore:
             raise ValueError('Ngưỡng trùng phải nằm trong khoảng 0–1 (vd 0.35).')
         if profile.provider not in PROVIDERS:
             raise ValueError(f'Nhà cung cấp AI không hợp lệ: {profile.provider}')
-        profile.slug = profile.slug or slugify(profile.name)
         if not profile.slug:
-            raise ValueError('Không tạo được mã Page từ tên này.')
+            profile.slug = slugify(profile.name)
+            if not profile.slug:
+                raise ValueError('Không tạo được mã Page từ tên này (cần có chữ hoặc số).')
+            if any(p.slug == profile.slug for p in self._pages):
+                existing = self.get(profile.slug).name
+                profile.slug = ''
+                raise ValueError(f'Tên này trùng mã với Page "{existing}". Hãy đặt tên khác.')
         for i, p in enumerate(self._pages):
             if p.slug == profile.slug:
                 self._pages[i] = profile
