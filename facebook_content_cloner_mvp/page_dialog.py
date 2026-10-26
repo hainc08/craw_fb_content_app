@@ -45,7 +45,7 @@ class PageManagerDialog(Toplevel):
             ttk.Entry(form, textvariable=self.vars[key], **opts).grid(row=i, column=1, sticky='ew', pady=2)
         ttk.Label(form, text='Nhà cung cấp AI:').grid(row=len(rows), column=0, sticky='w', pady=2)
         ttk.Combobox(form, textvariable=self.vars['provider'], values=PROVIDER_LABELS,
-                     state='readonly').grid(row=len(rows), column=1, sticky='w', pady=2)
+                     state='readonly', width=26).grid(row=len(rows), column=1, sticky='w', pady=2)
         ttk.Button(form, text='🔍 Kiểm tra token', command=self.check_token).grid(row=2, column=2, padx=6)
 
         ttk.Label(right, text='Dùng {page_name}, {hashtags} trong prompt để chèn tên Page và hashtag.',

@@ -2,7 +2,7 @@
 import queue
 import threading
 from pathlib import Path
-from tkinter import END, BooleanVar, StringVar, Text, Toplevel, filedialog, messagebox, ttk
+from tkinter import BooleanVar, StringVar, Text, Toplevel, filedialog, messagebox, ttk
 from typing import Callable
 
 import publisher
