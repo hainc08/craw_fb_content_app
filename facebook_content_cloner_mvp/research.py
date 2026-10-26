@@ -210,17 +210,22 @@ def generate_ai(provider: str, keys: dict, instruction: str, source: str, max_to
         raise ValueError(f"Nhà cung cấp AI không được hỗ trợ: {provider}")
 
 
-def analyze(source: str, provider: str, keys: dict) -> str:
+def render_prompt(template: str, page_name: str, hashtags: str) -> str:
+    """Thay {page_name}, {hashtags}; giữ nguyên mọi dấu ngoặc nhọn khác."""
+    return template.replace('{page_name}', page_name).replace('{hashtags}', hashtags)
+
+
+def analyze(source: str, provider: str, keys: dict, instruction: str | None = None) -> str:
     if not source.strip():
         raise ValueError("Bài nguồn chưa có nội dung để phân tích.")
-    return generate_ai(provider, keys, ANALYSIS_PROMPT, source, 1800)
+    return generate_ai(provider, keys, instruction or ANALYSIS_PROMPT, source, 1800)
 
 
-def create_new(source: str, analysis: str, provider: str, keys: dict) -> str:
+def create_new(source: str, analysis: str, provider: str, keys: dict, instruction: str | None = None) -> str:
     if not source.strip():
         raise ValueError("Bài nguồn chưa có nội dung.")
     prompt_input = f"BÀI NGUỒN:\n{source[:11000]}\n\nPHÂN TÍCH INSIGHT:\n{analysis[:7000]}"
-    return generate_ai(provider, keys, CREATION_PROMPT, prompt_input, 2600)
+    return generate_ai(provider, keys, instruction or CREATION_PROMPT, prompt_input, 2600)
 
 
 def similarity(source: str, draft: str) -> dict:
